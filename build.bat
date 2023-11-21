@@ -1,2 +1,2 @@
 @echo off
-cl /nologo /Zi main.c
+cl /nologo /O2 main.c
