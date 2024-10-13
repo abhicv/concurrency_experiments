@@ -38,23 +38,6 @@ float MultiplyAddRowColumn(Matrix matrixA, Matrix matrixB, unsigned int rowIndex
     return result;
 }
 
-typedef struct WorkData
-{
-    Matrix *result;
-    Matrix *A;
-    Matrix *B;
-    unsigned int rowIndex;
-    unsigned int columnIndex;
-} WorkData;
-
-void *RowColumnMultiplicationWork(void *data)
-{
-    WorkData *workData = (WorkData*)data;
-    Matrix *result = workData->result;
-    result->data[workData->rowIndex * result->column + workData->columnIndex] = MultiplyAddRowColumn(*workData->A, *workData->B, workData->rowIndex, workData->columnIndex);
-    return &result->data[workData->rowIndex * result->column + workData->columnIndex];
-}
-
 Matrix MatrixMultiply(Matrix matrixA, Matrix matrixB)
 {    
     if(matrixA.column != matrixB.row)

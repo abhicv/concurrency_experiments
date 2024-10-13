@@ -29,6 +29,7 @@ typedef struct ThreadContext
     WorkQueue *queue;
 } ThreadContext;
 
+
 void PushWork(WorkQueue *queue, WorkQueueEntry entry)
 {
     if(queue->entryCount >= MAX_QUEUE_SIZE)
@@ -40,14 +41,13 @@ void PushWork(WorkQueue *queue, WorkQueueEntry entry)
     queue->entries[queue->entryCount] = entry;
     MemoryBarrier();
     queue->entryCount++;
-
     ReleaseSemaphore(queue->semaphore, 1, 0);
 }
 
 DWORD DoWorkFromQueue(LPVOID lpParameter)
 {
     ThreadContext *context = (ThreadContext*)lpParameter;
-    // printf("Thread %d spwaned\n", context->threadId);
+    // printf("Thread %ld spawned\n", context->threadId);
 
     WorkQueue *queue = context->queue;
     while(1)
@@ -58,7 +58,7 @@ DWORD DoWorkFromQueue(LPVOID lpParameter)
             unsigned int index = InterlockedCompareExchange((long volatile*)&queue->nextEntryTodo, entryTodo + 1, entryTodo);
             if(index == entryTodo)
             {
-                // printf("Work %d done on thread %d\n", entryTodo, context->threadId);
+                // printf("Work %d done on thread %ld\n", entryTodo, context->threadId);
                 WorkQueueEntry *entry = &queue->entries[entryTodo];
                 entry->result = entry->callback(entry->data);
                 entry->isCompleted = true;
@@ -73,4 +73,41 @@ DWORD DoWorkFromQueue(LPVOID lpParameter)
     }
     
     return 0;
+}
+
+WorkQueue* CreateWorkQueueAndWorkerThreads(unsigned int threadCount) 
+{
+    SIZE_T stackSize = 0;
+
+    HANDLE semaphore = CreateSemaphore(0, 0, threadCount, 0);
+
+    WorkQueue *workQueue = (WorkQueue*)malloc(sizeof(WorkQueue));
+    workQueue->semaphore = semaphore;
+
+    for(int n = 0; n < threadCount; n++)
+    {
+        ThreadContext *context = (ThreadContext*)malloc(sizeof(ThreadContext));
+        context->threadId = n;
+        context->queue = workQueue;
+        context->workDoneCount = 0;
+        HANDLE threadHandle = CreateThread(0, stackSize, (LPTHREAD_START_ROUTINE)DoWorkFromQueue, context, 0, 0);
+    }
+
+    return workQueue;
+}
+
+void WaitUntilCompletion(WorkQueue *workQueue) {
+    while(TRUE)
+    {
+        boolean allCompleted = TRUE;
+        for(int n = 0; n < workQueue->entryCount; n++)
+        {
+            if(!workQueue->entries[n].isCompleted)
+            {
+                allCompleted = FALSE;
+                break;
+            }
+        }
+        if(allCompleted) break;
+    }
 }

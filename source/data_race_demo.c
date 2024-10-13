@@ -4,17 +4,22 @@
 
 #include "workqueue.c"
 
-static HANDLE mutex = 0;
+typedef struct SharedData {
+    int *counter;
+    HANDLE mutex;
+} SharedData;
 
 void *IncrementCounterSafeTask(void *data)
 {
+    SharedData *sharedData = (SharedData*)data;
+    
     // waiting until mutex is released from other thread
-    WaitForSingleObject(mutex, INFINITE);
+    WaitForSingleObject(sharedData->mutex, INFINITE);
 
-    int *counter = (int*)data;
+    int *counter = sharedData->counter;
     (*counter) += 1;
 
-    ReleaseMutex(mutex);
+    ReleaseMutex(sharedData->mutex);
 
     return 0;
 }
@@ -26,28 +31,11 @@ void *IncrementCounterTask(void *data)
     return 0;
 }
 
-#define THREAD_COUNT 6
-
-static WorkQueue workQueue = {0};
+#define THREAD_COUNT 8
 
 int main(int argc, char **argv)
 { 
-    HANDLE semaphore = CreateSemaphore(0, 0, THREAD_COUNT, 0);
-
-    workQueue.semaphore = semaphore;
-
-    SIZE_T stackSize = 0;
-
-    ThreadContext contexts[THREAD_COUNT] = {0};
-
-    for(int n = 0; n < THREAD_COUNT; n++)
-    {
-        ThreadContext *context = &contexts[n];
-        context->threadId = n;
-        context->queue = &workQueue;
-        context->workDoneCount = 0;
-        HANDLE threadHandle = CreateThread(0, stackSize, DoWorkFromQueue, context, 0, 0);
-    }
+    WorkQueue *workQueue = CreateWorkQueueAndWorkerThreads(THREAD_COUNT);
 
     int countUpto = 100000;
 
@@ -61,53 +49,34 @@ int main(int argc, char **argv)
         entry.callback = IncrementCounterTask;
         entry.data = (void*)&sharedCounter;
         entry.isCompleted = FALSE;
-        PushWork(&workQueue, entry);
+        PushWork(workQueue, entry);
     }
 
-    while(TRUE)
-    {
-        boolean allCompleted = TRUE;
-        for(int n = 0; n < workQueue.entryCount; n++)
-        {
-            if(!workQueue.entries[n].isCompleted)
-            {
-                allCompleted = FALSE;
-                break;
-            }
-        }
-        if(allCompleted) break;
-    }
+    WaitUntilCompletion(workQueue);
 
     printf("Without Mutex Counter: %d\n", sharedCounter);
 
-    workQueue.entryCount = 0;
-    workQueue.nextEntryTodo = 0;
+    workQueue->entryCount = 0;
+    workQueue->nextEntryTodo = 0;
+
     sharedCounter = 0;
 
-    mutex = CreateMutex(0, FALSE, 0);
+    HANDLE mutex = CreateMutex(0, FALSE, 0);
+
+    SharedData sharedData = {0};
+    sharedData.counter = &sharedCounter;
+    sharedData.mutex = mutex;
 
     for(int n = 0; n < countUpto; n++) 
     {
         WorkQueueEntry entry = {0};
         entry.callback = IncrementCounterSafeTask;
-        entry.data = (void*)&sharedCounter;
+        entry.data = (void*)&sharedData;
         entry.isCompleted = FALSE;
-        PushWork(&workQueue, entry);
+        PushWork(workQueue, entry);
     }
 
-    while(TRUE)
-    {
-        boolean allCompleted = TRUE;
-        for(int n = 0; n < workQueue.entryCount; n++)
-        {
-            if(!workQueue.entries[n].isCompleted)
-            {
-                allCompleted = FALSE;
-                break;
-            }
-        }
-        if(allCompleted) break;
-    }
+    WaitUntilCompletion(workQueue);
 
     printf("With Mutex Counter: %d\n", sharedCounter);
     

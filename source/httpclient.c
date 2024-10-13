@@ -2,6 +2,8 @@
 #include <winhttp.h>
 #include <stdio.h>
 
+#include "workqueue.c"
+
 typedef struct ByteArray
 {
     char *data;
@@ -67,15 +69,15 @@ ByteArray DoGetRequest(LPCWSTR url)
 
     DWORD size = 0;
     
-    if(!WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_RAW_HEADERS_CRLF, 0, 0, &size, 0) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-    {
-        LPWSTR buffer = malloc(size);
-        if(WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_RAW_HEADERS_CRLF, 0, buffer, &size, 0)) 
-        {
-            wprintf(L"%s", buffer);
-        }
-        free(buffer);
-    }
+    // if(!WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_RAW_HEADERS_CRLF, 0, 0, &size, 0) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+    // {
+    //     LPWSTR buffer = malloc(size);
+    //     if(WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_RAW_HEADERS_CRLF, 0, buffer, &size, 0)) 
+    //     {
+    //         wprintf(L"%s", buffer);
+    //     }
+    //     free(buffer);
+    // }
 
     DWORD error = GetLastError();
     
@@ -89,9 +91,7 @@ ByteArray DoGetRequest(LPCWSTR url)
     {
         unsigned char readBuffer[BUFFER_SIZE] = {0};
         WinHttpReadData(requestHandle, (LPVOID)readBuffer, BUFFER_SIZE, &responseReadSize);
-
         if(responseReadSize == 0) break;
-
         PushIntoByteArray(&array, readBuffer, responseReadSize);
     }
 
@@ -102,25 +102,73 @@ ByteArray DoGetRequest(LPCWSTR url)
     return array;
 }
 
-int main(int argc, char **argv)
+void DownloadImageAndSave() 
 {
     // LPCWSTR url = L"https://reqres.in/api/users?page=2";
     // LPCWSTR url = L"https://www.google.com";
     // LPCWSTR url =  L"https://raw.githubusercontent.com/json-iterator/test-data/master/large-file.json";
     // LPCWSTR url = L"https://filesamples.com/samples/image/bmp/sample_640%C3%97426.bmp";
-    LPCWSTR url = L"https://images.all-free-download.com/images/graphiclarge/small_mouse_macro_515329.jpg";
-    
+
+    LPCWSTR url = L"https://images.all-free-download.com/images/graphiclarge/small_mouse_macro_515329.jpg";    
+
+    printf("Downloading image...\n");
+
     ByteArray array = DoGetRequest(url);
+    printf("Length: %d\n", array.size);
 
-    // for(int n = 0; n < array.size; n++) 
-    // {
-    //     printf("%0.2x (%c),", array.data[n], array.data[n]);
-    //     // printf("%0.2x ", array.data[n]);
-    // }
+    // FILE *file = fopen("donwload.bin", "wb+");
+    // fwrite(array.data, sizeof(char), array.size, file);
+    // fclose(file);
 
-    // printf("Length: %d\n", array.size);
-    FILE *file = fopen("donwload.bin", "wb+");
-    fwrite(array.data, sizeof(char), array.size, file);
-    fclose(file);
+    free(array.data);
+}
+
+void *DownloadImageAndSaveWork(void *data) 
+{
+    DownloadImageAndSave();
+    return 0;
+}
+
+#define TOTAL_DOWNLOAD_COUNT 20
+
+int main(int argc, char **argv)
+{
+    LARGE_INTEGER start = {0};
+    LARGE_INTEGER end = {0};
+
+    QueryPerformanceCounter(&start);
+    
+    for(int n = 0; n < TOTAL_DOWNLOAD_COUNT; n++) {
+        DownloadImageAndSave();
+    }
+
+    QueryPerformanceCounter(&end);
+
+    unsigned long long seqTime = end.QuadPart - start.QuadPart;
+
+    printf("seq time: %lld\n", seqTime);
+
+    WorkQueue *workQueue = CreateWorkQueueAndWorkerThreads(8);
+
+    QueryPerformanceCounter(&start);
+
+    for(int n = 0; n < TOTAL_DOWNLOAD_COUNT; n++) {
+        WorkQueueEntry entry = {0};
+        entry.callback = DownloadImageAndSaveWork;
+        entry.data = 0;
+        entry.isCompleted = false;
+        PushWork(workQueue, entry);
+    }
+
+    WaitUntilCompletion(workQueue);
+
+    QueryPerformanceCounter(&end);
+
+    unsigned long long concurrentTime = end.QuadPart - start.QuadPart;
+
+    printf("concurrent time: %lld\n", concurrentTime);
+
+    printf("speed gain: %f\n", (double) seqTime / (double) concurrentTime);
+
     return 0;
 }
